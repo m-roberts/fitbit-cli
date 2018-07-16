@@ -13,6 +13,7 @@ from os import makedirs
 from os.path import exists
 from os.path import expanduser
 from os.path import isfile
+from pandas import DataFrame
 from pickle import dump as pdump
 from pickle import load as pload
 from pprint import pprint
@@ -24,7 +25,6 @@ from traceback import format_tb
 from webbrowser import open as webopen
 import cherrypy
 import datetime
-import pandas as pd
 
 saveToFile = False
 
@@ -202,7 +202,7 @@ class DataHandler:
             val_list.append(i['value'])
             time_list.append(i['time'])
 
-        heartdf = pd.DataFrame({'Heart Rate': val_list, 'Time': time_list})
+        heartdf = DataFrame({'Heart Rate': val_list, 'Time': time_list})
 
         output_file = "~/fb/heart" + self.yesterday + ".csv"
 
