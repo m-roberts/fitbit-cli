@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 
 from base64 import b64encode
+from datetime import datetime
+from datetime import timedelta
 from fitbit.api import Fitbit
 from json import dump as jdump
 from json import dumps as jdumps
@@ -24,7 +26,6 @@ from time import time
 from traceback import format_tb
 from webbrowser import open as webopen
 import cherrypy
-import datetime
 
 saveToFile = False
 
@@ -176,9 +177,8 @@ class AuthorisationManager:
         self._expires_at = str(tkn['expires_at'])
 
 
-class DataHandler:
-    now = datetime.datetime.now()
-    yesterday = str((now - datetime.timedelta(days=1)).strftime("%Y-%m-%d"))
+class FitbitDataHandler:
+    yesterday = str((datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"))
 
     def __init__(self, auth_manager):
         # print("Creating auth client")
@@ -223,15 +223,15 @@ def json_pretty_print(unformatted_json):
 authMan = AuthorisationManager(expanduser("~") + "/.fitbit")
 authMan.initialise()
 
-dh = DataHandler(authMan)
+fb = FitbitDataHandler(authMan)
 
 #############################
 # START TO WRAP AROUND THIS #
 #############################
-foods_log = dh.get_api_method_by_name("foods_log")
-result = foods_log(date=dh.now)
+foods_log = fb.get_api_method_by_name("foods_log")
+result = foods_log(date=datetime.now())
 
 if saveToFile:
-    dh.save_data_to_csv(data)
+    fb.save_data_to_csv(data)
 else:
     json_pretty_print(result)
