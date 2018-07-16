@@ -1,9 +1,0 @@
-Tutorial
-	https://towardsdatascience.com/collect-your-own-fitbit-data-with-python-ff145fa10873
-
-My Fitbit App Info
-	https://dev.fitbit.com/apps/details/22D3R3
-
-API
-	https://github.com/orcasgit/python-fitbit/
-	http://python-fitbit.readthedocs.io/en/latest/
