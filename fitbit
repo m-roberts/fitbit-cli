@@ -2,9 +2,9 @@
 
 from base64 import b64encode
 from fitbit.api import Fitbit
-from json import dump
-from json import dumps
-from json import load
+from json import dump as jdump
+from json import dumps as jdumps
+from json import load as jload
 from oauthlib.oauth2.rfc6749.errors import MismatchingStateError
 from oauthlib.oauth2.rfc6749.errors import MissingTokenError
 from os import R_OK
@@ -13,6 +13,8 @@ from os import makedirs
 from os.path import exists
 from os.path import expanduser
 from os.path import isfile
+from pickle import dump as pdump
+from pickle import load as pload
 from pprint import pprint
 from sys import exc_info
 from sys import exit
@@ -22,9 +24,7 @@ from traceback import format_tb
 from webbrowser import open as webopen
 import cherrypy
 import datetime
-import fitbit
 import pandas as pd
-import pickle
 
 saveToFile = False
 
@@ -110,7 +110,7 @@ class AuthorisationManager:
     def _get_client_auth_from_file_if_possible(self):
         if self._file_exists(self.client_auth_file):
             with open(self.client_auth_file) as f:
-                client_auth_data = load(f)
+                client_auth_data = jload(f)
             self.CLIENT_ID = client_auth_data["CLIENT_ID"]
             self.CLIENT_SECRET = client_auth_data["CLIENT_SECRET"]
 
@@ -127,7 +127,7 @@ class AuthorisationManager:
         client_auth_data = {"CLIENT_ID": self.CLIENT_ID,
                             "CLIENT_SECRET": self.CLIENT_SECRET}
         with open(self.client_auth_file, 'w') as f:  # Python 3: 'wb'
-            dump(client_auth_data, f)
+            jdump(client_auth_data, f)
 
     def _get_client_auth(self):
         self._get_client_auth_from_file_if_possible()
@@ -154,7 +154,7 @@ class AuthorisationManager:
         with open(self.client_tokens_file) as f:  # Python 3: 'rb'
             self.ACCESS_TOKEN, \
                 self.REFRESH_TOKEN, \
-                _expires_at_str = pickle.load(f)
+                _expires_at_str = pload(f)
             try:
                 self._expires_at = int(float(_expires_at_str)//1)
             except:
@@ -162,7 +162,7 @@ class AuthorisationManager:
 
     def _save_tokens_to_file(self):
         with open(self.client_tokens_file, 'w') as f:  # Python 3: 'wb'
-            pickle.dump([self.ACCESS_TOKEN,
+            pdump([self.ACCESS_TOKEN,
                          self.REFRESH_TOKEN,
                          self._expires_at], f)
 
@@ -184,7 +184,7 @@ class DataHandler:
         # print("Creating auth client")
         _access_tkn = auth_manager.ACCESS_TOKEN
         _refresh_tkn = auth_manager.REFRESH_TOKEN
-        self.auth2_client = fitbit.Fitbit(auth_manager.CLIENT_ID,
+        self.auth2_client = Fitbit(auth_manager.CLIENT_ID,
                                           auth_manager.CLIENT_SECRET,
                                           oauth2=True,
                                           access_token=_access_tkn,
@@ -214,7 +214,7 @@ class DataHandler:
 
 
 def json_pretty_print(unformatted_json):
-    print(dumps(unformatted_json, indent=4, sort_keys=True))
+    print(jdumps(unformatted_json, indent=4, sort_keys=True))
 
 
 #########################
