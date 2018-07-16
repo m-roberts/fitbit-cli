@@ -1,0 +1,237 @@
+#!/usr/bin/env python
+
+from base64 import b64encode
+from fitbit.api import Fitbit
+from json import dump
+from json import dumps
+from json import load
+from oauthlib.oauth2.rfc6749.errors import MismatchingStateError
+from oauthlib.oauth2.rfc6749.errors import MissingTokenError
+from os import R_OK
+from os import access
+from os import makedirs
+from os.path import exists
+from os.path import expanduser
+from os.path import isfile
+from pprint import pprint
+from sys import exc_info
+from sys import exit
+from threading import Timer
+from time import time
+from traceback import format_tb
+from webbrowser import open as webopen
+import cherrypy
+import datetime
+import fitbit
+import pandas as pd
+import pickle
+
+saveToFile = False
+
+
+class OAuth2Server:
+    def __init__(self, client_id, client_secret,
+                 redirect_uri='http://127.0.0.1:8080/'):
+        """ Initialize the FitbitOauth2Client """
+        self.success_html = """
+            <h1>You are now authorized to access the Fitbit API!</h1>
+            <br/><h3>You can close this window</h3>"""
+        self.failure_html = """
+            <h1>ERROR: %s</h1><br/><h3>You can close this window</h3>%s"""
+
+        self.fitbit = Fitbit(
+            client_id,
+            client_secret,
+            redirect_uri=redirect_uri,
+            timeout=10,
+        )
+
+    def browser_authorize(self):
+        """
+        Open a browser to the authorization url and spool up a CherryPy
+        server to accept the response
+        """
+        url, _ = self.fitbit.client.authorize_token_url()
+        # Open the web browser in a new thread for command-line browser support
+        Timer(1, webopen, args=(url,)).start()
+        cherrypy.quickstart(self)
+
+    @cherrypy.expose
+    def index(self, state, code=None, error=None):
+        """
+        Receive a Fitbit response containing a verification code. Use the code
+        to fetch the access_token.
+        """
+        error = None
+        if code:
+            try:
+                self.fitbit.client.fetch_access_token(code)
+            except MissingTokenError:
+                error = self._fmt_failure(
+                    'Missing access token parameter.</br>Please check that '
+                    'you are using the correct client_secret')
+            except MismatchingStateError:
+                error = self._fmt_failure('CSRF Warning! Mismatching state')
+        else:
+            error = self._fmt_failure('Unknown error while authenticating')
+        # Use a thread to shutdown cherrypy so we can return HTML first
+        self._shutdown_cherrypy()
+        return error if error else self.success_html
+
+    def _fmt_failure(self, message):
+        tb = format_tb(exc_info()[2])
+        tb_html = '<pre>%s</pre>' % ('\n'.join(tb)) if tb else ''
+        return self.failure_html % (message, tb_html)
+
+    def _shutdown_cherrypy(self):
+        """ Shutdown cherrypy in one second, if it's running """
+        if cherrypy.engine.state == cherrypy.engine.states.STARTED:
+            threading.Timer(1, cherrypy.engine.exit).start()
+
+
+class AuthorisationManager:
+    CLIENT_ID = ""
+    CLIENT_SECRET = ""
+    ACCESS_TOKEN = ""
+    REFRESH_TOKEN = ""
+    _expires_at = -1
+
+    def __init__(self, user_auth_dir):
+        self.client_auth_file = user_auth_dir + "/client_auth.json"
+        self.client_tokens_file = user_auth_dir + "/.tokens.pkl"
+
+        if not exists(user_auth_dir):
+            makedirs(user_auth_dir)
+
+    def initialise(self):
+        self._get_client_auth()
+        self._get_tokens()
+
+    def _get_client_auth_from_file_if_possible(self):
+        if self._file_exists(self.client_auth_file):
+            with open(self.client_auth_file) as f:
+                client_auth_data = load(f)
+            self.CLIENT_ID = client_auth_data["CLIENT_ID"]
+            self.CLIENT_SECRET = client_auth_data["CLIENT_SECRET"]
+
+    def _client_auth_required(self):
+        return (self.CLIENT_ID == "" or self.CLIENT_SECRET == "")
+
+    def _get_client_auth_from_user_if_required(self):
+        if self.CLIENT_ID == "":
+            self.CLIENT_ID = raw_input("What is your CLIENT_ID? ")
+        if self.CLIENT_SECRET == "":
+            self.CLIENT_SECRET = raw_input("What is your CLIENT_SECRET? ")
+
+    def _save_client_auth_to_file(self):
+        client_auth_data = {"CLIENT_ID": self.CLIENT_ID,
+                            "CLIENT_SECRET": self.CLIENT_SECRET}
+        with open(self.client_auth_file, 'w') as f:  # Python 3: 'wb'
+            dump(client_auth_data, f)
+
+    def _get_client_auth(self):
+        self._get_client_auth_from_file_if_possible()
+        if self._client_auth_required():
+            self._get_client_auth_from_user_if_required()
+            self._save_client_auth_to_file()
+
+    def _get_tokens(self):
+        if self._file_exists(self.client_tokens_file):
+            self._load_tokens_from_file()
+
+        token_expired = int(time()) > int(self._expires_at)
+        not_authorised = (self.ACCESS_TOKEN == "" or self.REFRESH_TOKEN == "")
+
+        if token_expired or not_authorised:
+            self.authorise_and_get_tokens()
+            self._save_tokens_to_file()  # Save for next time
+            print("Now authorised - run again to get data. Exiting...")
+
+    def _file_exists(self, file_path):
+        return (isfile(file_path) and access(file_path, R_OK))
+
+    def _load_tokens_from_file(self):
+        with open(self.client_tokens_file) as f:  # Python 3: 'rb'
+            self.ACCESS_TOKEN, \
+                self.REFRESH_TOKEN, \
+                _expires_at_str = pickle.load(f)
+            try:
+                self._expires_at = int(float(_expires_at_str)//1)
+            except:
+                pass
+
+    def _save_tokens_to_file(self):
+        with open(self.client_tokens_file, 'w') as f:  # Python 3: 'wb'
+            pickle.dump([self.ACCESS_TOKEN,
+                         self.REFRESH_TOKEN,
+                         self._expires_at], f)
+
+    def authorise_and_get_tokens(self):
+        server = OAuth2Server.OAuth2Server(self.CLIENT_ID, self.CLIENT_SECRET)
+        server.browser_authorize()
+
+        tkn = server.fitbit.client.session.token
+        self.ACCESS_TOKEN = str(tkn['access_token'])
+        self.REFRESH_TOKEN = str(tkn['refresh_token'])
+        self._expires_at = str(tkn['expires_at'])
+
+
+class DataHandler:
+    now = datetime.datetime.now()
+    yesterday = str((now - datetime.timedelta(days=1)).strftime("%Y-%m-%d"))
+
+    def __init__(self, auth_manager):
+        # print("Creating auth client")
+        _access_tkn = auth_manager.ACCESS_TOKEN
+        _refresh_tkn = auth_manager.REFRESH_TOKEN
+        self.auth2_client = fitbit.Fitbit(auth_manager.CLIENT_ID,
+                                          auth_manager.CLIENT_SECRET,
+                                          oauth2=True,
+                                          access_token=_access_tkn,
+                                          refresh_token=_refresh_tkn)
+
+    def get_api_method_by_name(self, method_name):
+        return getattr(self.auth2_client, method_name)
+
+    def save_data_to_csv(self, data):
+        print("Parsing results...")
+        time_list = []
+        val_list = []
+
+        for i in data['activities-heart-intraday']['dataset']:
+            val_list.append(i['value'])
+            time_list.append(i['time'])
+
+        heartdf = pd.DataFrame({'Heart Rate': val_list, 'Time': time_list})
+
+        output_file = "~/fb/heart" + self.yesterday + ".csv"
+
+        heartdf.to_csv(output_file,
+                       columns=['Time', 'Heart Rate'],
+                       header=True,
+                       index=False)
+        print("Saving results to " + str(output_file))
+
+
+def json_pretty_print(unformatted_json):
+    print(dumps(unformatted_json, indent=4, sort_keys=True))
+
+
+#########################
+# MAIN CODE STARTS HERE #
+#########################
+authMan = AuthorisationManager(expanduser("~") + "/.fitbit")
+authMan.initialise()
+
+dh = DataHandler(authMan)
+
+#############################
+# START TO WRAP AROUND THIS #
+#############################
+foods_log = dh.get_api_method_by_name("foods_log")
+result = foods_log(date=dh.now)
+
+if saveToFile:
+    dh.save_data_to_csv(data)
+else:
+    json_pretty_print(result)
