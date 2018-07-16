@@ -1,6 +1,6 @@
 # fitbit-cli
 
-### A command-line interface for communicating with the Fitbit API
+### A command-line interface (currently using Python 2) for communicating with the Fitbit API
 
 ## Setup
 ### Setting up the `fitbit` command

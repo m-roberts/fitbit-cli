@@ -27,8 +27,6 @@ from traceback import format_tb
 from webbrowser import open as webopen
 import cherrypy
 
-saveToFile = False
-
 
 class OAuth2Server:
     def __init__(self, client_id, client_secret,
@@ -164,8 +162,8 @@ class AuthorisationManager:
     def _save_tokens_to_file(self):
         with open(self.client_tokens_file, 'w') as f:  # Python 3: 'wb'
             pdump([self.ACCESS_TOKEN,
-                         self.REFRESH_TOKEN,
-                         self._expires_at], f)
+                   self.REFRESH_TOKEN,
+                   self._expires_at], f)
 
     def authorise_and_get_tokens(self):
         server = OAuth2Server.OAuth2Server(self.CLIENT_ID, self.CLIENT_SECRET)
@@ -181,14 +179,13 @@ class FitbitDataHandler:
     yesterday = str((datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"))
 
     def __init__(self, auth_manager):
-        # print("Creating auth client")
         _access_tkn = auth_manager.ACCESS_TOKEN
         _refresh_tkn = auth_manager.REFRESH_TOKEN
         self.auth2_client = Fitbit(auth_manager.CLIENT_ID,
-                                          auth_manager.CLIENT_SECRET,
-                                          oauth2=True,
-                                          access_token=_access_tkn,
-                                          refresh_token=_refresh_tkn)
+                                   auth_manager.CLIENT_SECRET,
+                                   oauth2=True,
+                                   access_token=_access_tkn,
+                                   refresh_token=_refresh_tkn)
 
     def get_api_method_by_name(self, method_name):
         return getattr(self.auth2_client, method_name)
@@ -217,21 +214,13 @@ def json_pretty_print(unformatted_json):
     print(jdumps(unformatted_json, indent=4, sort_keys=True))
 
 
-#########################
-# MAIN CODE STARTS HERE #
-#########################
-authMan = AuthorisationManager(expanduser("~") + "/.fitbit")
-authMan.initialise()
+if __name__ == "__main__":
+    authMan = AuthorisationManager(expanduser("~") + "/.fitbit")
+    authMan.initialise()
 
-fb = FitbitDataHandler(authMan)
+    fb = FitbitDataHandler(authMan)
 
-#############################
-# START TO WRAP AROUND THIS #
-#############################
-foods_log = fb.get_api_method_by_name("foods_log")
-result = foods_log(date=datetime.now())
-
-if saveToFile:
-    fb.save_data_to_csv(data)
-else:
+    foods_log = fb.get_api_method_by_name("foods_log")
+    result = foods_log(date=datetime.now())
     json_pretty_print(result)
+    # fb.save_data_to_csv(result)  # CURRENTLY INTENDED ONLY FOR HEART DATA
