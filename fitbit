@@ -85,7 +85,7 @@ class OAuth2Server:
     def _shutdown_cherrypy(self):
         """ Shutdown cherrypy in one second, if it's running """
         if cherrypy.engine.state == cherrypy.engine.states.STARTED:
-            threading.Timer(1, cherrypy.engine.exit).start()
+            Timer(1, cherrypy.engine.exit).start()
 
 
 class AuthorisationManager:
@@ -166,7 +166,7 @@ class AuthorisationManager:
                    self._expires_at], f)
 
     def authorise_and_get_tokens(self):
-        server = OAuth2Server.OAuth2Server(self.CLIENT_ID, self.CLIENT_SECRET)
+        server = OAuth2Server(self.CLIENT_ID, self.CLIENT_SECRET)
         server.browser_authorize()
 
         tkn = server.fitbit.client.session.token
