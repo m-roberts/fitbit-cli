@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from argparse import ArgumentParser
+from argparse import ArgumentTypeError
 from base64 import b64encode
 from datetime import datetime
 from datetime import timedelta
@@ -185,7 +187,8 @@ class FitbitDataHandler:
                                    auth_manager.CLIENT_SECRET,
                                    oauth2=True,
                                    access_token=_access_tkn,
-                                   refresh_token=_refresh_tkn)
+                                   refresh_token=_refresh_tkn,
+                                   system=Fitbit.METRIC)
 
     def get_api_method_by_name(self, method_name):
         return getattr(self.auth2_client, method_name)
@@ -214,13 +217,55 @@ def json_pretty_print(unformatted_json):
     print(jdumps(unformatted_json, indent=4, sort_keys=True))
 
 
+def check_positive(value):
+    ivalue = int(value)
+    if ivalue <= 0:
+        raise ArgumentTypeError(
+            "%s is an invalid positive integer value" % value)
+    return ivalue
+
+
+def get_parsed_args():
+    parser = ArgumentParser(description='Get or set Fitbit settings')
+    # , formatter_class=RawTextHelpFormatter)
+    parser.add_argument("-w", "--water",
+                        help="Get or set Fitbit water amount for today",
+                        nargs='?', const=-1, type=check_positive)
+    parser.add_argument("-v", "--verbose", action="count")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    args = get_parsed_args()
+
+    if args.water is None:
+        print("Currently only developed to work with '--water'")
+        exit()
+
     authMan = AuthorisationManager(expanduser("~") + "/.fitbit")
     authMan.initialise()
 
     fb = FitbitDataHandler(authMan)
 
-    foods_log = fb.get_api_method_by_name("foods_log")
-    result = foods_log(date=datetime.now())
-    json_pretty_print(result)
+    foods_log_water = fb.get_api_method_by_name("foods_log_water")
+
+    adding_water_to_log = (args.water != -1)
+
+    if adding_water_to_log:
+        result = foods_log_water(data={"amount": args.water})
+
+        amount_added = result["waterLog"]["amount"]
+        if amount_added == args.water:
+            print("Successfully added " + str(amount_added) +
+                  "mL to today's water intake")
+        else:
+            print("Failed to add " + str(amount_added) +
+                  "mL to today's water intake")
+            json_pretty_print(result)
+            exit()
+
+    result = foods_log_water(data=None)
+    total_intake = result["summary"]["water"]
+    print("Today's water intake: " + str(total_intake) + "mL")
+
     # fb.save_data_to_csv(result)  # CURRENTLY INTENDED ONLY FOR HEART DATA
