@@ -3,6 +3,7 @@
 from argparse import ArgumentParser
 from argparse import ArgumentTypeError
 from base64 import b64encode
+from contextlib import contextmanager
 from datetime import datetime
 from datetime import timedelta
 from fitbit.api import Fitbit
@@ -11,9 +12,10 @@ from json import dumps as jdumps
 from json import load as jload
 from oauthlib.oauth2.rfc6749.errors import MismatchingStateError
 from oauthlib.oauth2.rfc6749.errors import MissingTokenError
-from os import R_OK
 from os import access
+from os import devnull
 from os import makedirs
+from os import R_OK
 from os.path import exists
 from os.path import expanduser
 from os.path import isfile
@@ -21,19 +23,37 @@ from pandas import DataFrame
 from pickle import dump as pdump
 from pickle import load as pload
 from pprint import pprint
-from sys import exc_info
 from sys import exit
 from threading import Timer
 from time import time
 from traceback import format_tb
 from webbrowser import open as webopen
 import cherrypy
+import sys
+
+
+@contextmanager
+def suppress_output():
+    with open(devnull, "w") as NULL:
+        old_stdout = sys.stdout
+        sys.stdout = NULL
+
+        old_stderr = sys.stderr
+        sys.stderr = NULL
+
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
 
 
 class OAuth2Server:
     def __init__(self, client_id, client_secret,
-                 redirect_uri='http://127.0.0.1:8080/'):
+                 redirect_uri='http://127.0.0.1:8080/', silent=True):
         """ Initialize the FitbitOauth2Client """
+        cherrypy.config.update({'log.screen': (not silent)})
+
         self.success_html = """
             <h1>You are now authorized to access the Fitbit API!</h1>
             <br/><h3>You can close this window</h3>"""
@@ -55,7 +75,8 @@ class OAuth2Server:
         url, _ = self.fitbit.client.authorize_token_url()
         # Open the web browser in a new thread for command-line browser support
         Timer(1, webopen, args=(url,)).start()
-        cherrypy.quickstart(self)
+        with suppress_output():
+            cherrypy.quickstart(self)
 
     @cherrypy.expose
     def index(self, state, code=None, error=None):
@@ -80,7 +101,7 @@ class OAuth2Server:
         return error if error else self.success_html
 
     def _fmt_failure(self, message):
-        tb = format_tb(exc_info()[2])
+        tb = format_tb(sys.exc_info()[2])
         tb_html = '<pre>%s</pre>' % ('\n'.join(tb)) if tb else ''
         return self.failure_html % (message, tb_html)
 
@@ -97,9 +118,10 @@ class AuthorisationManager:
     REFRESH_TOKEN = ""
     _expires_at = -1
 
-    def __init__(self, user_auth_dir):
+    def __init__(self, user_auth_dir, auth_flag):
         self.client_auth_file = user_auth_dir + "/client_auth.json"
         self.client_tokens_file = user_auth_dir + "/.tokens.pkl"
+        self.auth_flag_set = auth_flag
 
         if not exists(user_auth_dir):
             makedirs(user_auth_dir)
@@ -133,20 +155,28 @@ class AuthorisationManager:
     def _get_client_auth(self):
         self._get_client_auth_from_file_if_possible()
         if self._client_auth_required():
-            self._get_client_auth_from_user_if_required()
-            self._save_client_auth_to_file()
+            if self.auth_flag_set:
+                self._get_client_auth_from_user_if_required()
+                self._save_client_auth_to_file()
+            else:
+                print("Authorisation required but '--auth' not provided")
+                exit()
 
     def _get_tokens(self):
         if self._file_exists(self.client_tokens_file):
             self._load_tokens_from_file()
 
-        token_expired = int(time()) > int(self._expires_at)
         not_authorised = (self.ACCESS_TOKEN == "" or self.REFRESH_TOKEN == "")
 
-        if token_expired or not_authorised:
-            self.authorise_and_get_tokens()
-            self._save_tokens_to_file()  # Save for next time
-            print("Now authorised - run again to get data. Exiting...")
+        if not_authorised:
+            if self.auth_flag_set:
+                print("Authorising...")
+                tkns = self.authorise_and_get_tokens_for_session()
+                self.update_tokens_and_save(tkns)
+                print("Now authorised - run again to get data. Exiting...")
+            else:
+                print("Authorisation required but '--auth' not provided")
+            exit()
 
     def _file_exists(self, file_path):
         return (isfile(file_path) and access(file_path, R_OK))
@@ -157,7 +187,7 @@ class AuthorisationManager:
                 self.REFRESH_TOKEN, \
                 _expires_at_str = pload(f)
             try:
-                self._expires_at = int(float(_expires_at_str)//1)
+                self.EXPIRES_AT = int(float(_expires_at_str)//1)
             except:
                 pass
 
@@ -165,16 +195,18 @@ class AuthorisationManager:
         with open(self.client_tokens_file, 'w') as f:  # Python 3: 'wb'
             pdump([self.ACCESS_TOKEN,
                    self.REFRESH_TOKEN,
-                   self._expires_at], f)
+                   self.EXPIRES_AT], f)
 
-    def authorise_and_get_tokens(self):
+    def authorise_and_get_tokens_for_session(self):
         server = OAuth2Server(self.CLIENT_ID, self.CLIENT_SECRET)
         server.browser_authorize()
+        return server.fitbit.client.session.token
 
-        tkn = server.fitbit.client.session.token
-        self.ACCESS_TOKEN = str(tkn['access_token'])
-        self.REFRESH_TOKEN = str(tkn['refresh_token'])
-        self._expires_at = str(tkn['expires_at'])
+    def update_tokens_and_save(self, tkns):
+        self.ACCESS_TOKEN = tkns["access_token"]
+        self.REFRESH_TOKEN = tkns["refresh_token"]
+        self.EXPIRES_AT = tkns["expires_at"]
+        self._save_tokens_to_file()
 
 
 class FitbitDataHandler:
@@ -183,34 +215,19 @@ class FitbitDataHandler:
     def __init__(self, auth_manager):
         _access_tkn = auth_manager.ACCESS_TOKEN
         _refresh_tkn = auth_manager.REFRESH_TOKEN
+        _expires_at = auth_manager.EXPIRES_AT
+        refresh_cb = auth_manager.update_tokens_and_save
         self.auth2_client = Fitbit(auth_manager.CLIENT_ID,
                                    auth_manager.CLIENT_SECRET,
                                    oauth2=True,
                                    access_token=_access_tkn,
                                    refresh_token=_refresh_tkn,
+                                   expires_at=_expires_at,
+                                   refresh_cb=refresh_cb,
                                    system=Fitbit.METRIC)
 
     def get_api_method_by_name(self, method_name):
         return getattr(self.auth2_client, method_name)
-
-    def save_data_to_csv(self, data):
-        print("Parsing results...")
-        time_list = []
-        val_list = []
-
-        for i in data['activities-heart-intraday']['dataset']:
-            val_list.append(i['value'])
-            time_list.append(i['time'])
-
-        heartdf = DataFrame({'Heart Rate': val_list, 'Time': time_list})
-
-        output_file = "~/fb/heart" + self.yesterday + ".csv"
-
-        heartdf.to_csv(output_file,
-                       columns=['Time', 'Heart Rate'],
-                       header=True,
-                       index=False)
-        print("Saving results to " + str(output_file))
 
 
 def json_pretty_print(unformatted_json):
@@ -227,7 +244,8 @@ def check_positive(value):
 
 def get_parsed_args():
     parser = ArgumentParser(description='Get or set Fitbit settings')
-    # , formatter_class=RawTextHelpFormatter)
+    parser.add_argument("--auth",
+                        nargs='?', const=True, help="Authorise Fitbit")
     parser.add_argument("-w", "--water",
                         help="Get or set Fitbit water amount for today",
                         nargs='?', const=-1, type=check_positive)
@@ -235,37 +253,50 @@ def get_parsed_args():
     return parser.parse_args()
 
 
+def add_to_water_intake(fb, amount_to_add):
+    foods_log_water = fb.get_api_method_by_name("foods_log_water")
+    result = foods_log_water(data={"amount": amount_to_add})
+
+    amount_added = result["waterLog"]["amount"]
+    if amount_added == args.water:
+        print("Successfully added " + str(amount_added) +
+              "ml to today's water intake")
+    else:
+        print("Failed to add " + str(amount_added) +
+              "ml to today's water intake")
+        json_pretty_print(result)
+        exit()
+
+
+def get_water_intake(fb):
+    foods_log_water = fb.get_api_method_by_name("foods_log_water")
+    result = foods_log_water(data=None)
+    total_intake = result["summary"]["water"]
+    print("Today's water intake: " + str(total_intake) + "ml")
+
+
+def main(fb, args):
+    if args.water is None:
+        print("Currently only developed to work with " +
+              "'--water' (GET TOTAL WATER INTAKE FOR TODAY) and " +
+              "'--water X' (ADD X TO TOTAL WATER INTAKE FOR TODAY)")
+        exit()
+
+    adding_water_to_log = (args.water != -1)
+    if adding_water_to_log:
+        add_to_water_intake(fb, args.water)
+
+    get_water_intake(fb)
+
 if __name__ == "__main__":
     args = get_parsed_args()
 
-    if args.water is None:
-        print("Currently only developed to work with '--water'")
-        exit()
+    auth_flag_set = args.auth if hasattr(args, 'auth') else False
+    authMan = AuthorisationManager(expanduser("~") + "/.fitbit", auth_flag_set)
 
-    authMan = AuthorisationManager(expanduser("~") + "/.fitbit")
-    authMan.initialise()
+    if auth_flag_set:
+        print("Authenticated. Remove '--auth' flag. Exiting...")
+    else:
+        authMan.initialise()
 
-    fb = FitbitDataHandler(authMan)
-
-    foods_log_water = fb.get_api_method_by_name("foods_log_water")
-
-    adding_water_to_log = (args.water != -1)
-
-    if adding_water_to_log:
-        result = foods_log_water(data={"amount": args.water})
-
-        amount_added = result["waterLog"]["amount"]
-        if amount_added == args.water:
-            print("Successfully added " + str(amount_added) +
-                  "mL to today's water intake")
-        else:
-            print("Failed to add " + str(amount_added) +
-                  "mL to today's water intake")
-            json_pretty_print(result)
-            exit()
-
-    result = foods_log_water(data=None)
-    total_intake = result["summary"]["water"]
-    print("Today's water intake: " + str(total_intake) + "mL")
-
-    # fb.save_data_to_csv(result)  # CURRENTLY INTENDED ONLY FOR HEART DATA
+        main(FitbitDataHandler(authMan), args)

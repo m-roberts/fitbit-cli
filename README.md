@@ -2,6 +2,9 @@
 
 ### A command-line interface (currently using Python 2) for communicating with the Fitbit API
 
+## Notice
+This tool is a work in progress.
+
 ## Setup
 ### Setting up the `fitbit` command
 Run `setup.sh` to install dependencies and create the `fitbit` executable command.
@@ -28,7 +31,6 @@ The following tutorial is adapted from [an article on Towards Data Science](http
 
 ## Using The CLI
 Run `fitbit` directly in your terminal. Assuming that your PATH is set correctly, this should work out-of-the-box. On first run, OAuth credentials will be required. These are then saved in your home directory (in `~/.fitbit/`), and subsequent calls will begin to retrieve data.
-**Currently, this is only outputting today's food log as a proof of concept.**
 
 ## API
 * [Source](https://github.com/orcasgit/python-fitbit/)
