@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 from argparse import ArgumentParser
 from argparse import ArgumentTypeError
@@ -182,7 +182,7 @@ class AuthorisationManager:
         return (isfile(file_path) and access(file_path, R_OK))
 
     def _load_tokens_from_file(self):
-        with open(self.client_tokens_file) as f:  # Python 3: 'rb'
+        with open(self.client_tokens_file, "rb") as f:
             self.ACCESS_TOKEN, \
                 self.REFRESH_TOKEN, \
                 _expires_at_str = pload(f)
@@ -192,7 +192,7 @@ class AuthorisationManager:
                 pass
 
     def _save_tokens_to_file(self):
-        with open(self.client_tokens_file, 'w') as f:  # Python 3: 'wb'
+        with open(self.client_tokens_file, "wb") as f:
             pdump([self.ACCESS_TOKEN,
                    self.REFRESH_TOKEN,
                    self.EXPIRES_AT], f)
